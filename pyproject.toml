@@ -1,0 +1,25 @@
+[project]
+name = "pr-review-agent"
+version = "0.2.0"
+description = "PR review agent built on the deepagents library instead of a hand-rolled ReAct loop."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "deepagents==0.6.12",
+    "langchain-groq>=0.3.0",
+    "langchain-cerebras>=0.8.2",
+    "langchain-google-genai>=4.2.7",
+    "langfuse>=4.13.0",
+    "requests>=2.32.0",
+    "python-dotenv>=1.2.2",
+    "rich>=15.0.0",
+    "streamlit>=1.60.0",
+]
+
+[tool.uv]
+prerelease = "allow"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
