@@ -3,3 +3,4 @@ plan.md
 *.pyc
 /outputs
 /tmp
+/mock
