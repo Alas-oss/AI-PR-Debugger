@@ -1,2 +1,5 @@
 plan.md
 .env
+*.pyc
+/outputs
+/tmp
