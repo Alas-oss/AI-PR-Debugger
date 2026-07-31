@@ -8,7 +8,7 @@ Reviewing a pull request splits into two jobs: checking that a change is mechani
 
 This project was built on top of a LangGraph-based library called `deepagents`, which provides a sandboxed virtual filesystem with path-escape protection, subagent delegation via a built-in `task` tool, and permission rules.
 
-Separately, RAG was considered and rejected as the primary architecture. RAG earns its cost when you have a large corpus that needs to be narrowed down before it can be sent to the model. A single PR's diff and immediate surrounding code essentially never has that problem; what actually varies between PRs is whether the reviewer needs to look at one more file or run the test suite, which is a tool-use and planning decision, not a retrieval one. An agent with file and test-running tools was the better fit for that reason, not because RAG is worse in general.
+Separately, RAG was considered and rejected as the primary architecture. RAG earns its cost when you have a large corpus that needs to be narrowed down before it can be sent to the model. A single PR's diff and immediate surrounding code essentially never has that problem; what actually varies between PRs is whether the reviewer needs to look at one more file or run the test suite, which is a tool-use and planning decision, not a retrieval one. An agent with file and test-running tools was the better fit for that reason.
 
 ## 3. Architecture
 
