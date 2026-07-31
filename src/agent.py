@@ -51,6 +51,9 @@ class PRReviewAgent:
         self.skills_dir = repo_root / "skills"          
         self.output_dir = repo_root / "outputs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in self.output_dir.glob("*"):
+            if stale.is_file() and stale.name != "long_term_store.json":
+                stale.unlink()
 
         self.temp_dir = str(repo_root / "outputs" / ".tmp")
         Path(self.temp_dir).mkdir(parents=True, exist_ok=True)
