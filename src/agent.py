@@ -16,6 +16,7 @@ from langfuse.langchain import CallbackHandler
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.middleware.filesystem import FilesystemPermission
+from langchain_mistralai import ChatMistralAI
 
 from tools import ALL_TOOLS, TOOLS_BY_NAME
 from memory import LongTermMemoryStore
@@ -28,12 +29,14 @@ langfuse_handler = CallbackHandler()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-PROVIDER_CHAIN = ["cerebras", "groq", "gemini"]
+PROVIDER_CHAIN = ["groq", "gemini", "cerebras"]
 MAX_GRAPH_STEPS = 50
 
 
 def _build_model(provider: str):
-    if provider == "cerebras":
+    if provider == "mistral":
+        return ChatMistralAI(model="mistral-medium-2508", api_key=os.getenv("MISTREAK_API_KEY"), temperature=0.2, timeout=60, max_retries=2)
+    elif provider == "cerebras":
         return ChatCerebras(model="gpt-oss-120b", api_key=os.getenv("CEREBRAS_API_KEY"), temperature=0.2, timeout=60, max_retries=2)
     elif provider == "gemini":
         return ChatGoogleGenerativeAI(model="gemini-flash-latest", api_key=os.getenv("GOOGLE_API_KEY"), temperature=0.2, timeout=60, max_retries=2)
@@ -155,6 +158,24 @@ class PRReviewAgent:
             "This is a real PR. Only use dry_run=true if you were explicitly told to."
         )
 
+        diff_path = self.output_dir / "pr_diff.txt"
+        notes_path = self.output_dir / "review_notes.md"
+        findings_path = self.output_dir / "findings.json"
+
+        resume_note = ""
+        if diff_path.exists():
+            resume_note += (
+                "\nA diff has ALREADY been produced this run at outputs/pr_diff.txt (an earlier "
+                "provider attempt ran out of quota partway through). Do NOT delegate to "
+                "downloader-agent again - go straight to analyzer-agent, telling it to use this "
+                "existing file."
+            )
+        if notes_path.exists() and findings_path.exists():
+            resume_note += (
+                "\nReview notes and findings have ALREADY been produced this run at "
+                "outputs/review_notes.md and outputs/findings.json. Do NOT delegate to "
+                "analyzer-agent again - go straight to commenter-agent with these existing files."
+            )
         return f"""You are the supervisor of a PR-review agent cluster. Your mission: find real
 issues in the given pull request's diff (bugs, edge cases, security problems, likely test
 failures) and post clear, actionable suggestions as a single PR comment. You do not guess -
@@ -223,18 +244,17 @@ CRITICAL ARCHITECTURAL CONSTRAINTS:
                         return result
                     except Exception as e:
                         status = getattr(e, "status_code", None)
-                        err_text = str(e)
+                        if status is None and getattr(e, "response", None) is not None:
+                            status = getattr(e.response, "status_code", None)
+                        err_text = str(2)
+                        if getattr(e, "response", None) is not None:
+                            try:
+                                err_text = f"{err_text} | nody: {e.response.text[:500]}"
+                            except Exception:
+                                pass
                         is_rate_limited = (
                             status == 429 or "rate_limit" in err_text.lower() or "resource_exhausted" in err_text.lower()
                         )
-                        if is_rate_limited and attempt == 1:
-                            print(f"[agent] {provider} hit a rate limit - waiting 20s for one retry before moving on...", flush=True)
-                            time.sleep(60)
-                            continue 
-                        reason = "capacity/quota" if is_rate_limited else f"error ({type(e).__name__}, status {status})"
-                        print(f"[agent] {provider} failed - {reason}, trying next provider...", flush=True)
-                        errors.append(f"{provider}: {type(e).__name__}: {e}")
-                        break 
             raise RuntimeError("All providers exhausted:\n" + "\n".join(errors))
         finally:
             shutil.rmtree(self.temp_dir, ignore_errors=True)

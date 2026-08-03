@@ -1,9 +1,10 @@
 import subprocess
+import json
 from pathlib import Path
 
 from langchain_core.tools import tool
 
-from github_client import parse_pr_url, fetch_pr_metadata, post_comment
+from github_client import parse_pr_url, fetch_pr_metadata, post_comment, post_review_comment
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 
@@ -133,5 +134,44 @@ def post_github_comment(pr_url: str, body: str, dry_run: bool = False) -> dict:
     return {"success": not result.startswith("Error"), "message": result}
 
 
-ALL_TOOLS = [resolve_pr, clone_repo, checkout_merge_base, checkout_ref, get_diff, run_tests, post_github_comment]
+# make it publish comments by line
+# Give it a place to actually post the created commnet
+# change the prompt so that it doesn't just create one .md code file but multiple smaller files that can be 
+# routed to the different lines of code
+# instead of md make a json file so that the model could directly upload the comments to the corresponding lines
+# body can still be in md format but check the doc for other parameters
+
+@tool
+def post_review_comments(pr_url: str, commit_id: str, findings_path: str, dry_run: bool = False) -> dict:
+    """Post multiple line-anchored review comments on a PR, one per finding, from a JSON file 
+    at findings_path. The file mush contain a JSON array of objects shaped like: 
+    {"path": "relative/file.py", "line": 42, "body": "explanation + suggested fix", "side": "RIGHT"}
+    ("side" is optional, defaults to "RIGHT" - use "LEFT" only for a findings about a deleted line).
+    Always pass dry_run=true for the local mock-Pr test."""
+    parsed = parse_pr_url(pr_url)
+    if "error" in parsed:
+        return {"success": False, "message": parsed["error"]}
+
+    real_path = _to_real_path(findings_path)
+    try:
+        findings = json.loads(real_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"Could not read/parse findings JSON at {findings_path}: {e}"}
+
+    if not isinstance(findings, list) or not findings:
+        return {"success": False, "message": f"Expected a non-empty JSON array of findings at {findings_path}."}
+
+    posted, failed, details = 0, 0, []
+    for item in findings:
+        result = post_review_comment(
+            parsed, commit_id=commit_id, path=item["path"], line=item["line"],
+            body=item["body"], side=item.get("side", "RIGHT"), dry_run=dry_run,
+        )
+        details.append(result["message"])
+        posted += int(result["success"])
+        failed += int(not result["success"])
+
+    return {"success": failed == 0, "message": f"Posted {posted}/{len(findings)} line comments.", "details": details}
+
+ALL_TOOLS = [resolve_pr, clone_repo, checkout_merge_base, checkout_ref, get_diff, run_tests, post_github_comment, post_review_comments]
 TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}

@@ -13,12 +13,6 @@ _PR_URL_RE = re.compile(
 
 
 def parse_pr_url(pr_url: str) -> dict:
-    """
-    Two modes:
-      - mode="github": a real https://github.com/<owner>/<repo>/pull/<n> URL.
-      - mode="local":  a "local:<path-to-mock-repo>" reference produced by
-                        mock/create_mock_pr.py, for the mock-PR test.
-    """
     if pr_url.startswith("local:"):
         repo_path = Path(pr_url[len("local:"):]).resolve()
         meta_path = repo_path / ".mock_pr.json"
@@ -82,7 +76,7 @@ def post_comment(parsed: dict, body: str, dry_run: bool = False) -> str:
         out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "mock_review_comment.md"
-        with open(out_path, "w") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             f.write(body)
         return f"[DRY RUN] Comment not posted to any API. Written to {out_path}"
 
@@ -95,3 +89,25 @@ def post_comment(parsed: dict, body: str, dry_run: bool = False) -> str:
     if resp.status_code not in (200, 201):
         return f"Error posting comment ({resp.status_code}): {resp.text[:300]}"
     return f"Comment posted: {resp.json().get('html_url', '(no url returned)')}"
+# add parameters outside of just the body parameter, look into the documentation and read it to understand
+# What else you should add
+
+def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body: str, side: str = "RIGHT", dry_run: bool = False) -> dict:
+    if dry_run or parsed.get("mode") == "local":
+        out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "mock_review_line_comments.jsonl"
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"path": path, "line": line, "side": side, "body": body}) + "\n")
+        return {"success": True, "message": f"[DRY RUN] Line comment not posted. Appended to {out_path}"}
+
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return {"success": False, "message": "Error: GITHUB_TOKEN not set; cannot post a real review comment."}
+
+    url = f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}/pulls/{parsed['pr_number']}/comments"
+    payload = {"body": body, "commit_id": commit_id, "path": path, "line": line, "side": side}
+    resp = requests.post(url, headers=_auth_headers(), json=payload, timeout=30)
+    if resp.status_code != 201:
+        return {"success": False, "message": f"Error posting line comment on {path}:{line} ({resp.status_code}): {resp.text[:300]}"}
+    return {"success": True, "message": f"Line comment posted: {resp.json().get('html_url', '(no url returned)')}"}
