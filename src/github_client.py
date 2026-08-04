@@ -89,8 +89,6 @@ def post_comment(parsed: dict, body: str, dry_run: bool = False) -> str:
     if resp.status_code not in (200, 201):
         return f"Error posting comment ({resp.status_code}): {resp.text[:300]}"
     return f"Comment posted: {resp.json().get('html_url', '(no url returned)')}"
-# add parameters outside of just the body parameter, look into the documentation and read it to understand
-# What else you should add
 
 def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body: str, side: str = "RIGHT", dry_run: bool = False) -> dict:
     if dry_run or parsed.get("mode") == "local":
@@ -111,3 +109,23 @@ def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body
     if resp.status_code != 201:
         return {"success": False, "message": f"Error posting line comment on {path}:{line} ({resp.status_code}): {resp.text[:300]}"}
     return {"success": True, "message": f"Line comment posted: {resp.json().get('html_url', '(no url returned)')}"}
+
+def post_review(parsed: dict, commit_id: str, body: str, comments: list, event: str = "COMMENT", dry_run: bool = False) -> dict:
+    if dry_run or parsed.get("mode") == "local":
+        out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "mock_review.json"
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump({"commit_id": commit_id, "body": body, "event": event, "comments": comments}, f, indent=2)
+        return {"success": True, "message": f"[DRY RUN] Review not posted. Written to {out_path}"}
+
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return {"success": False, "message": "Error: GITHUB_TOKEN not set; cannot post a real review."}
+
+    url = f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}/pulls/{parsed['pr_number']}/reviews"
+    payload = {"commit_id": commit_id, "body": body, "event": event, "comments": comments}
+    resp = requests.post(url, headers=_auth_headers(), json=payload, timeout=30)
+    if resp.status_code not in (200, 201):
+        return {"success": False, "message": f"Error posting review ({resp.status_code}): {resp.text[:300]}"}
+    return {"success": True, "message": f"Review posted: {resp.json().get('html_url', '(no url returned)')}"}

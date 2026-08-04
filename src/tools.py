@@ -4,10 +4,10 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from github_client import parse_pr_url, fetch_pr_metadata, post_comment, post_review_comment
+from github_client import parse_pr_url, fetch_pr_metadata, post_review as post_review_api
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
-
+PR_META_PATH = "outputs/pr_meta.json"
 
 def _to_real_path(path_like: str) -> Path:
     """Map a path to a real location on disk, refusing anything outside WORKSPACE_ROOT.
@@ -52,8 +52,71 @@ def resolve_pr(pr_url: str) -> dict:
     meta = fetch_pr_metadata(parsed)
     if "error" in meta:
         return {"success": False, "message": meta["error"]}
+    try:
+        meta_path = _to_real_path(PR_META_PATH)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     return {"success": True, "message": "Resolved PR metadata.", **meta}
 
+
+@tool
+def save_diff(diff_text: str) -> dict:
+    """Save the produced diff text to the canonical path outputs/pr_diff.txt - always this
+    exact path, chosen by this tool rather than by you, so a later step (or a retry after a
+    provider failure) can reliably detect a diff already exists this run."""
+    real_path = _to_real_path("outputs/pr_diff.txt")
+    real_path.parent.mkdir(parents=True, exist_ok=True)
+    real_path.write_text(diff_text, encoding="utf-8")
+    return {"success": True, "message": "Diff saved to outputs/pr_diff.txt.", "path": "outputs/pr_diff.txt"}
+
+@tool
+def save_review_output(markdown: str, findings_json: str) -> dict:
+    """Save the review markdown and JSON findings to their canonical paths
+    (outputs/review_notes.md and outputs/findings.json - always these exact paths).
+    findings_json must be a valid JSON array string shaped like:
+    [{"path": "relative/file.py", "line": 42, "side": "RIGHT", "body": "..."}]"""
+    try:
+        parsed_findings = json.loads(findings_json)
+        if not isinstance(parsed_findings, list):
+            raise ValueError("findings_json must be a JSON array")
+    except Exception as e:
+        return {"success": False, "message": f"findings_json is not valid JSON: {e}"}
+    notes_path = _to_real_path("outputs/review_notes.md")
+    findings_path = _to_real_path("outputs/findings.json")
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    notes_path.write_text(markdown, encoding="utf-8")
+    findings_path.write_text(json.dumps(parsed_findings, indent=2), encoding="utf-8")
+    return {"success": True, "message": "Saved outputs/review_notes.md and outputs/findings.json.",
+            "notes_path": "outputs/review_notes.md", "findings_path": "outputs/findings.json"}
+
+
+@tool
+def post_review(pr_url: str, body: str, findings_path: str = "outputs/findings.json", dry_run: bool = False) -> dict:
+    """Post ONE atomic PR review containing an overall summary plus every line-anchored
+    finding together, via GitHub's 'create a review' endpoint - appears grouped under a
+    single reviewer action in the PR's Files changed tab, not scattered as separate items.
+    commit_id is read automatically from outputs/pr_meta.json (written by resolve_pr earlier
+    this run), never trusted from anything passed in - this is what prevents posting against
+    a stale or wrong commit. Always pass dry_run=true for the local mock-PR test."""
+    parsed = parse_pr_url(pr_url)
+    if "error" in parsed:
+        return {"success": False, "message": parsed["error"]}
+
+    try:
+        meta = json.loads(_to_real_path(PR_META_PATH).read_text(encoding="utf-8"))
+        commit_id = meta["head_sha"]
+    except Exception as e:
+        return {"success": False, "message": f"Could not read head_sha from {PR_META_PATH} - resolve_pr must run first this run: {e}"}
+
+    try:
+        findings = json.loads(_to_real_path(findings_path).read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"Could not read/parse findings JSON at {findings_path}: {e}"}
+
+    comments = [{"path": f["path"], "line": f["line"], "side": f.get("side", "RIGHT"), "body": f["body"]} for f in findings]
+    return post_review_api(parsed, commit_id=commit_id, body=body, comments=comments, dry_run=dry_run)
 
 @tool
 def clone_repo(clone_url: str, dest_path: str) -> dict:
@@ -122,56 +185,5 @@ def run_tests(repo_path: str, command: str = "pytest -q") -> dict:
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "test run timed out after 90s."}
 
-
-@tool
-def post_github_comment(pr_url: str, body: str, dry_run: bool = False) -> dict:
-    """Post the finished review as a comment on the PR. Always pass dry_run=true for the
-    local mock-PR test - without it this will try (and fail) to hit the real GitHub API."""
-    parsed = parse_pr_url(pr_url)
-    if "error" in parsed:
-        return {"success": False, "message": parsed["error"]}
-    result = post_comment(parsed, body, dry_run=dry_run)
-    return {"success": not result.startswith("Error"), "message": result}
-
-
-# make it publish comments by line
-# Give it a place to actually post the created commnet
-# change the prompt so that it doesn't just create one .md code file but multiple smaller files that can be 
-# routed to the different lines of code
-# instead of md make a json file so that the model could directly upload the comments to the corresponding lines
-# body can still be in md format but check the doc for other parameters
-
-@tool
-def post_review_comments(pr_url: str, commit_id: str, findings_path: str, dry_run: bool = False) -> dict:
-    """Post multiple line-anchored review comments on a PR, one per finding, from a JSON file 
-    at findings_path. The file mush contain a JSON array of objects shaped like: 
-    {"path": "relative/file.py", "line": 42, "body": "explanation + suggested fix", "side": "RIGHT"}
-    ("side" is optional, defaults to "RIGHT" - use "LEFT" only for a findings about a deleted line).
-    Always pass dry_run=true for the local mock-Pr test."""
-    parsed = parse_pr_url(pr_url)
-    if "error" in parsed:
-        return {"success": False, "message": parsed["error"]}
-
-    real_path = _to_real_path(findings_path)
-    try:
-        findings = json.loads(real_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        return {"success": False, "message": f"Could not read/parse findings JSON at {findings_path}: {e}"}
-
-    if not isinstance(findings, list) or not findings:
-        return {"success": False, "message": f"Expected a non-empty JSON array of findings at {findings_path}."}
-
-    posted, failed, details = 0, 0, []
-    for item in findings:
-        result = post_review_comment(
-            parsed, commit_id=commit_id, path=item["path"], line=item["line"],
-            body=item["body"], side=item.get("side", "RIGHT"), dry_run=dry_run,
-        )
-        details.append(result["message"])
-        posted += int(result["success"])
-        failed += int(not result["success"])
-
-    return {"success": failed == 0, "message": f"Posted {posted}/{len(findings)} line comments.", "details": details}
-
-ALL_TOOLS = [resolve_pr, clone_repo, checkout_merge_base, checkout_ref, get_diff, run_tests, post_github_comment, post_review_comments]
+ALL_TOOLS = [resolve_pr, clone_repo, checkout_merge_base, checkout_ref, get_diff, run_tests, save_diff, save_review_output, post_review]
 TOOLS_BY_NAME = {t.name: t for t in ALL_TOOLS}

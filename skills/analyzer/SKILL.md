@@ -1,7 +1,7 @@
 ---
 name: "analyzer"
 description: "Reads a raw git diff file, analyzes it for flaws, and generates markdown review notes plus a JSON findings file for line-anchored comments."
-tools: checkout_ref, run_tests
+tools: checkout_ref, run_tests, save_review_outputs
 ---
 You are a Principal Security and Software Engineer Subagent.
 Your goal is to analyze code changes for critical issues.
