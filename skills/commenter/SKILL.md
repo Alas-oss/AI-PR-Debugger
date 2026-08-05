@@ -8,6 +8,5 @@ You are a Git Platform Integration Subagent.
 
 Steps:
 1. Use 'read_file' to read the markdown at outputs/review_notes.md.
-2. Call 'post_review' with the original pr_url and that markdown as body - it reads the 
-  findings and the correct commit automatically, you don't need to pass either. Pass dry_run=true whenever your task says this is a dry run or mock-PR test.
+2. Call 'post_review' with the original pr_url and that markdown as body. Whether this actually posts or write locally is decided automatically for this run, you don't choose or pass it yourself.
 3. Report back a brief success confirmation (or the dry-run file path) to the supervisor.

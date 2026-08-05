@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from github_client import parse_pr_url, fetch_pr_metadata, post_review as post_review_api
+from github_client import parse_pr_url, fetch_pr_metadata, post_comment as post_comment_api, post_review_comment as post_review_comment_api
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 PR_META_PATH = "outputs/pr_meta.json"
@@ -69,7 +69,7 @@ def save_diff(diff_text: str) -> dict:
     real_path = _to_real_path("outputs/pr_diff.txt")
     real_path.parent.mkdir(parents=True, exist_ok=True)
     real_path.write_text(diff_text, encoding="utf-8")
-    return {"success": True, "message": "Diff saved to outputs/pr_diff.txt.", "path": "outputs/pr_diff.txt"}
+    return {"success": True, "message": "Diff saved to /outputs/pr_diff.txt.", "path": "/outputs/pr_diff.txt"}
 
 @tool
 def save_review_output(markdown: str, findings_json: str) -> dict:
@@ -89,17 +89,15 @@ def save_review_output(markdown: str, findings_json: str) -> dict:
     notes_path.write_text(markdown, encoding="utf-8")
     findings_path.write_text(json.dumps(parsed_findings, indent=2), encoding="utf-8")
     return {"success": True, "message": "Saved outputs/review_notes.md and outputs/findings.json.",
-            "notes_path": "outputs/review_notes.md", "findings_path": "outputs/findings.json"}
-
+            "notes_path": "/outputs/review_notes.md", "findings_path": "/outputs/findings.json"}
 
 @tool
-def post_review(pr_url: str, body: str, findings_path: str = "outputs/findings.json", dry_run: bool = False) -> dict:
-    """Post ONE atomic PR review containing an overall summary plus every line-anchored
-    finding together, via GitHub's 'create a review' endpoint - appears grouped under a
-    single reviewer action in the PR's Files changed tab, not scattered as separate items.
-    commit_id is read automatically from outputs/pr_meta.json (written by resolve_pr earlier
-    this run), never trusted from anything passed in - this is what prevents posting against
-    a stale or wrong commit. Always pass dry_run=true for the local mock-PR test."""
+def post_review(pr_url: str, body: str, findings_path: str = "outputs/findings.json") -> dict:
+    """Post the review as separate comments: one overall summary comment, plus one individual
+    line-anchored comment per finding in findings_path - not bundled into a single review
+    object. commit_id is read automatically from outputs/pr_meta.json, and dry-run is read
+    automatically from outputs/run_mode.json - both set once at the start of this run, never
+    something you choose or pass yourself."""
     parsed = parse_pr_url(pr_url)
     if "error" in parsed:
         return {"success": False, "message": parsed["error"]}
@@ -111,12 +109,31 @@ def post_review(pr_url: str, body: str, findings_path: str = "outputs/findings.j
         return {"success": False, "message": f"Could not read head_sha from {PR_META_PATH} - resolve_pr must run first this run: {e}"}
 
     try:
+        mode = json.loads(_to_real_path("outputs/run_mode.json").read_text(encoding="utf-8"))
+        dry_run = mode.get("dry_run", False)
+    except Exception:
+        dry_run = False
+
+    try:
         findings = json.loads(_to_real_path(findings_path).read_text(encoding="utf-8"))
     except Exception as e:
         return {"success": False, "message": f"Could not read/parse findings JSON at {findings_path}: {e}"}
+    print(f"[DEBUG LOG] Resolved dry_run state is: {dry_run}")
+    summary_result = post_comment_api(parsed, body, dry_run=dry_run)
 
-    comments = [{"path": f["path"], "line": f["line"], "side": f.get("side", "RIGHT"), "body": f["body"]} for f in findings]
-    return post_review_api(parsed, commit_id=commit_id, body=body, comments=comments, dry_run=dry_run)
+    posted, failed, details = 0, 0, [summary_result["message"]]
+    for item in findings:
+        result = post_review_comment_api(
+            parsed, commit_id=commit_id, path=item["path"], line=item["line"],
+            body=item["body"], side=item.get("side", "RIGHT"), dry_run=dry_run,
+        )
+        details.append(result["message"])
+        posted += int(result["success"])
+        failed += int(not result["success"])
+
+    return {"success": summary_result["success"] and failed == 0,
+            "message": f"Summary posted; {posted}/{len(findings)} line comments posted.",
+            "details": details}
 
 @tool
 def clone_repo(clone_url: str, dest_path: str) -> dict:

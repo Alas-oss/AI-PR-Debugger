@@ -6,3 +6,7 @@ plan.md
 /mock
 mock/mock_repo
 mock/mock_repo
+test_line_comment.py
+test_post_review_tool.py
+.gitignore
+tests/test_post_review.py

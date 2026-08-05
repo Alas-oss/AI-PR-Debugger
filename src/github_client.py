@@ -71,26 +71,26 @@ def fetch_pr_metadata(parsed: dict) -> dict:
     }
 
 
-def post_comment(parsed: dict, body: str, dry_run: bool = False) -> str:
+def post_comment(parsed: dict, body: str, dry_run: bool = False) -> dict:
     if dry_run or parsed.get("mode") == "local":
         out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "mock_review_comment.md"
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(body)
-        return f"[DRY RUN] Comment not posted to any API. Written to {out_path}"
-
+        return {"success": True, "message": f"[DRY RUN] Comment not posted. Written to {out_path}"}
     token = os.getenv("GITHUB_TOKEN")
     if not token:
-        return "Error: GITHUB_TOKEN not set; cannot post a real PR comment. Re-run with dry_run=True to test locally."
-
+        return {"success": False, "message": "Error: GITHUB_TOKEN not set."}
     url = f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}/issues/{parsed['pr_number']}/comments"
     resp = requests.post(url, headers=_auth_headers(), json={"body": body}, timeout=30)
     if resp.status_code not in (200, 201):
-        return f"Error posting comment ({resp.status_code}): {resp.text[:300]}"
-    return f"Comment posted: {resp.json().get('html_url', '(no url returned)')}"
+        return {"success": False, "message": f"Error posting comment ({resp.status_code}): {resp.text[:300]}"}
+    return {"success": True, "message": f"Comment posted: {resp.json().get('html_url', '(no url returned)')}"}
 
-def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body: str, side: str = "RIGHT", dry_run: bool = False) -> dict:
+
+def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body: str,
+                         side: str = "RIGHT", dry_run: bool = False) -> dict:
     if dry_run or parsed.get("mode") == "local":
         out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -98,34 +98,12 @@ def post_review_comment(parsed: dict, commit_id: str, path: str, line: int, body
         with open(out_path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"path": path, "line": line, "side": side, "body": body}) + "\n")
         return {"success": True, "message": f"[DRY RUN] Line comment not posted. Appended to {out_path}"}
-
     token = os.getenv("GITHUB_TOKEN")
     if not token:
-        return {"success": False, "message": "Error: GITHUB_TOKEN not set; cannot post a real review comment."}
-
+        return {"success": False, "message": "Error: GITHUB_TOKEN not set."}
     url = f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}/pulls/{parsed['pr_number']}/comments"
     payload = {"body": body, "commit_id": commit_id, "path": path, "line": line, "side": side}
     resp = requests.post(url, headers=_auth_headers(), json=payload, timeout=30)
     if resp.status_code != 201:
         return {"success": False, "message": f"Error posting line comment on {path}:{line} ({resp.status_code}): {resp.text[:300]}"}
     return {"success": True, "message": f"Line comment posted: {resp.json().get('html_url', '(no url returned)')}"}
-
-def post_review(parsed: dict, commit_id: str, body: str, comments: list, event: str = "COMMENT", dry_run: bool = False) -> dict:
-    if dry_run or parsed.get("mode") == "local":
-        out_dir = Path(parsed.get("repo_path", ".")).resolve() if parsed.get("mode") == "local" else Path("outputs")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / "mock_review.json"
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump({"commit_id": commit_id, "body": body, "event": event, "comments": comments}, f, indent=2)
-        return {"success": True, "message": f"[DRY RUN] Review not posted. Written to {out_path}"}
-
-    token = os.getenv("GITHUB_TOKEN")
-    if not token:
-        return {"success": False, "message": "Error: GITHUB_TOKEN not set; cannot post a real review."}
-
-    url = f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}/pulls/{parsed['pr_number']}/reviews"
-    payload = {"commit_id": commit_id, "body": body, "event": event, "comments": comments}
-    resp = requests.post(url, headers=_auth_headers(), json=payload, timeout=30)
-    if resp.status_code not in (200, 201):
-        return {"success": False, "message": f"Error posting review ({resp.status_code}): {resp.text[:300]}"}
-    return {"success": True, "message": f"Review posted: {resp.json().get('html_url', '(no url returned)')}"}

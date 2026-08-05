@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import time
+import json
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -29,7 +30,7 @@ langfuse_handler = CallbackHandler()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-PROVIDER_CHAIN = ["groq", "gemini", "cerebras"]
+PROVIDER_CHAIN = ["cerebras"]
 MAX_GRAPH_STEPS = 50
 
 
@@ -54,6 +55,9 @@ class PRReviewAgent:
         self.skills_dir = repo_root / "skills"          
         self.output_dir = repo_root / "outputs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "run_mode.json").write_text(
+            json.dumps({"dry_run": self.dry_run}), encoding="utf-8"
+        ) 
         for stale in self.output_dir.glob("*"):
             if stale.is_file() and stale.name != "long_term_store.json":
                 stale.unlink()
@@ -209,6 +213,9 @@ CRITICAL ARCHITECTURAL CONSTRAINTS:
   post_github_comment yourself - those belong to a skill's subagent so its blueprint's
   constraints are actually enforced. You may call resolve_pr yourself only to sanity-check a
   URL before delegating, never as a substitute for delegating the actual work.
+- Never call read_file, ls, or glob yourself to inspect or verify a subagent's output - that
+  wastes turns and risks guessing the wrong path. Trust each subagent's own final report, and
+  move directly to the next delegation.
 """
 
     def execute_react_loop(self, printer=None):
