@@ -30,7 +30,7 @@ langfuse_handler = CallbackHandler()
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-PROVIDER_CHAIN = ["cerebras"]
+PROVIDER_CHAIN = ["groq", "gemini", "cerebras"]
 MAX_GRAPH_STEPS = 50
 
 
