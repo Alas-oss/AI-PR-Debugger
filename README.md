@@ -127,4 +127,3 @@ Detailed instructions for the subagent
 - GitHub API rate limits apply, and posting comments requires a token with the scopes above.
 - This tool is a complement to, not a replacement for, deterministic checks (linters, type checkers, CI test suites) - those remain the right tool for anything expressible as a fixed rule.
 - The mock PR test harness exercises one specific set of intentionally introduced bugs; passing it is a smoke test, not a guarantee of correctness against arbitrary real-world PRs.
-- End-to-end latency on free-tier providers can be significant (an early full run took ~24 minutes, mostly spent on rate-limit fallback between providers) - a paid tier on at least one provider is recommended for anything beyond occasional testing.
